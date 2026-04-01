@@ -1,4 +1,5 @@
 import os
+import time
 import yfinance as yf
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -46,6 +47,10 @@ COMMON_TICKERS = {
     "shopify": "SHOP", "zoom": "ZM",
 }
 
+CACHE_TTL = 20
+_STOCK_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 def resolve_ticker(company: str) -> str:
     cleaned = company.strip().upper()
     if len(cleaned) <= 6 and cleaned.replace(".", "").replace("-", "").isalpha():
@@ -55,36 +60,69 @@ def resolve_ticker(company: str) -> str:
         return COMMON_TICKERS[lower]
     return cleaned
 
+
+def _get_cached_info(symbol: str) -> dict | None:
+    entry = _STOCK_CACHE.get(symbol)
+    if not entry:
+        return None
+    ts, info = entry
+    if time.monotonic() - ts > CACHE_TTL:
+        _STOCK_CACHE.pop(symbol, None)
+        return None
+    return info
+
+
+def _set_cached_info(symbol: str, info: dict) -> None:
+    if not info:
+        return
+    _STOCK_CACHE[symbol] = (time.monotonic(), info)
+
+
 def get_info(company: str):
     symbol = resolve_ticker(company)
+    cached = _get_cached_info(symbol)
+    if cached:
+        return symbol, cached
+
     ticker = yf.Ticker(symbol)
+    info: dict[str, object] = {}
 
     try:
-        info = ticker.info or {}
+        fast = ticker.fast_info
+        info = {
+            "longName": symbol,
+            "shortName": symbol,
+            "currency": fast.get("currency"),
+            "currentPrice": fast.get("last_price"),
+            "regularMarketPrice": fast.get("last_price"),
+            "previousClose": fast.get("previous_close"),
+            "dayHigh": fast.get("day_high"),
+            "dayLow": fast.get("day_low"),
+            "marketCap": fast.get("market_cap"),
+            "trailingPE": fast.get("trailing_pe"),
+            "dividendYield": fast.get("dividend_yield"),
+            "volume": fast.get("last_volume"),
+            "fiftyTwoWeekHigh": fast.get("year_high"),
+            "fiftyTwoWeekLow": fast.get("year_low"),
+        }
     except Exception:
         info = {}
 
-    if not isinstance(info, dict) or not info:
+    if not info:
         try:
-            fast = ticker.fast_info
-            info = {
-                "longName": symbol,
-                "shortName": symbol,
-                "currency": fast.get("currency"),
-                "currentPrice": fast.get("last_price"),
-                "regularMarketPrice": fast.get("last_price"),
-                "previousClose": fast.get("previous_close"),
-                "dayHigh": fast.get("day_high"),
-                "dayLow": fast.get("day_low"),
-                "marketCap": fast.get("market_cap"),
-                "trailingPE": fast.get("trailing_pe"),
-                "dividendYield": fast.get("dividend_yield"),
-                "volume": fast.get("last_volume"),
-                "fiftyTwoWeekHigh": fast.get("year_high"),
-                "fiftyTwoWeekLow": fast.get("year_low"),
-            }
-        except Exception:
+            info = ticker.info or {}
+        except Exception as exc:
+            if "Too Many Requests" in str(exc) or "429" in str(exc):
+                cached = _get_cached_info(symbol)
+                if cached:
+                    return symbol, cached
             info = {}
+
+    if not isinstance(info, dict):
+        info = {}
+
+    if info:
+        _set_cached_info(symbol, info)
 
     return symbol, info
 
