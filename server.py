@@ -4,9 +4,9 @@ from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
 
 # ── FastMCP setup ─────────────────────────────────────────────────────────────
@@ -252,6 +252,12 @@ def compare_stocks(company1: str, company2: str) -> str:
 async def health(request: Request):
     return JSONResponse({"status": "ok", "server": "stock-info-server"})
 
+async def root(request: Request):
+    return JSONResponse({"status": "ok", "server": "stock-info-server", "message": "Stock MCP Server"})
+
+async def favicon(request: Request):
+    return PlainTextResponse("", status_code=204)
+
 mcp_sse_app = mcp.sse_app()
 
 app = Starlette(
@@ -261,6 +267,8 @@ app = Starlette(
     ],
     routes=[
         Route("/health", endpoint=health),
+        Route("/", endpoint=root),
+        Route("/favicon.ico", endpoint=favicon),
         *mcp_sse_app.routes,
     ]
 )
