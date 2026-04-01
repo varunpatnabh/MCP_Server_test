@@ -2,6 +2,7 @@ services:
   - type: web
     name: stock-mcp-server
     runtime: python
+    pythonVersion: "3.12"
     buildCommand: pip install -r requirements.txt
     startCommand: python server.py
     envVars:
