@@ -57,7 +57,35 @@ def resolve_ticker(company: str) -> str:
 
 def get_info(company: str):
     symbol = resolve_ticker(company)
-    info = yf.Ticker(symbol).info
+    ticker = yf.Ticker(symbol)
+
+    try:
+        info = ticker.info or {}
+    except Exception:
+        info = {}
+
+    if not isinstance(info, dict) or not info:
+        try:
+            fast = ticker.fast_info
+            info = {
+                "longName": symbol,
+                "shortName": symbol,
+                "currency": fast.get("currency"),
+                "currentPrice": fast.get("last_price"),
+                "regularMarketPrice": fast.get("last_price"),
+                "previousClose": fast.get("previous_close"),
+                "dayHigh": fast.get("day_high"),
+                "dayLow": fast.get("day_low"),
+                "marketCap": fast.get("market_cap"),
+                "trailingPE": fast.get("trailing_pe"),
+                "dividendYield": fast.get("dividend_yield"),
+                "volume": fast.get("last_volume"),
+                "fiftyTwoWeekHigh": fast.get("year_high"),
+                "fiftyTwoWeekLow": fast.get("year_low"),
+            }
+        except Exception:
+            info = {}
+
     return symbol, info
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
