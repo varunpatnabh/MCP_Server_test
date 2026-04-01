@@ -2,6 +2,8 @@ import os
 import yfinance as yf
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Mount, Route
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -223,6 +225,10 @@ async def health(request: Request):
     return JSONResponse({"status": "ok", "server": "stock-mcp-server"})
 
 app = Starlette(
+    debug=False,
+    middleware=[
+        Middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    ],
     routes=[
         Route("/health", endpoint=health),
         Mount("/", app=mcp.sse_app()),   # handles /sse and /messages/ correctly
