@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
@@ -414,7 +414,7 @@ app = Starlette(
         Route("/health", endpoint=health),
         Route("/", endpoint=root),
         Route("/favicon.ico", endpoint=favicon),
-        *mcp_sse_app.routes,
+        Mount("/", app=mcp_sse_app),
     ]
 )
 
