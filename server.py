@@ -1,5 +1,9 @@
 import os
 import time
+import csv
+import json
+import urllib.request
+import urllib.error
 import yfinance as yf
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -78,16 +82,106 @@ def _set_cached_info(symbol: str, info: dict) -> None:
     _STOCK_CACHE[symbol] = (time.monotonic(), info)
 
 
+def _parse_float(value: str | float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_int(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "too many requests" in text or "429" in text or "rate limit" in text
+
+
+def _fetch_stooq(symbol: str) -> dict[str, object]:
+    base = symbol.split(".")[0].lower()
+    if not base.endswith(".us"):
+        base = base + ".us"
+    url = f"https://stooq.com/q/l/?s={base}&f=sd2t2ohlcv&h&e=csv"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        text = resp.read().decode("utf-8", errors="ignore")
+    reader = csv.DictReader(text.splitlines())
+    row = next(reader, None)
+    if not row or not row.get("Close"):
+        return {}
+
+    close = _parse_float(row.get("Close"))
+    high = _parse_float(row.get("High"))
+    low = _parse_float(row.get("Low"))
+    volume = _parse_int(row.get("Volume"))
+    return {
+        "longName": symbol,
+        "shortName": symbol,
+        "currency": "USD",
+        "currentPrice": close,
+        "regularMarketPrice": close,
+        "previousClose": close,
+        "dayHigh": high,
+        "dayLow": low,
+        "marketCap": None,
+        "trailingPE": None,
+        "dividendYield": None,
+        "volume": volume,
+        "fiftyTwoWeekHigh": high,
+        "fiftyTwoWeekLow": low,
+    }
+
+
+def _fetch_yahoo_quote(symbol: str) -> dict[str, object]:
+    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8", errors="ignore")
+    payload = json.loads(body)
+    results = payload.get("quoteResponse", {}).get("result", [])
+    if not results:
+        return {}
+    data = results[0]
+    return {
+        "longName": data.get("longName") or symbol,
+        "shortName": data.get("shortName") or symbol,
+        "currency": data.get("currency", "USD"),
+        "currentPrice": data.get("regularMarketPrice") or data.get("bid") or data.get("ask"),
+        "regularMarketPrice": data.get("regularMarketPreviousClose") or data.get("regularMarketPrice"),
+        "previousClose": data.get("regularMarketPreviousClose"),
+        "dayHigh": data.get("regularMarketDayHigh"),
+        "dayLow": data.get("regularMarketDayLow"),
+        "marketCap": data.get("marketCap"),
+        "trailingPE": data.get("trailingPE"),
+        "dividendYield": data.get("dividendYield"),
+        "volume": data.get("regularMarketVolume") or data.get("volume"),
+        "fiftyTwoWeekHigh": data.get("fiftyTwoWeekHigh"),
+        "fiftyTwoWeekLow": data.get("fiftyTwoWeekLow"),
+        "exchange": data.get("fullExchangeName") or data.get("exchange"),
+        "sector": data.get("sector"),
+        "industry": data.get("industry"),
+    }
+
+
 def get_info(company: str):
     symbol = resolve_ticker(company)
     cached = _get_cached_info(symbol)
     if cached:
         return symbol, cached
 
-    ticker = yf.Ticker(symbol)
     info: dict[str, object] = {}
+    last_error: Exception | None = None
 
     try:
+        ticker = yf.Ticker(symbol)
         fast = ticker.fast_info
         info = {
             "longName": symbol,
@@ -104,25 +198,38 @@ def get_info(company: str):
             "volume": fast.get("last_volume"),
             "fiftyTwoWeekHigh": fast.get("year_high"),
             "fiftyTwoWeekLow": fast.get("year_low"),
+            "exchange": symbol,
+            "sector": "N/A",
+            "industry": "N/A",
         }
-    except Exception:
+    except Exception as exc:
+        last_error = exc
         info = {}
 
     if not info:
         try:
-            info = ticker.info or {}
+            info = _fetch_yahoo_quote(symbol)
         except Exception as exc:
-            if "Too Many Requests" in str(exc) or "429" in str(exc):
-                cached = _get_cached_info(symbol)
-                if cached:
-                    return symbol, cached
+            last_error = exc
+            info = {}
+
+    if not info:
+        try:
+            info = _fetch_stooq(symbol)
+        except Exception as exc:
+            last_error = exc
             info = {}
 
     if not isinstance(info, dict):
         info = {}
 
+    if not info and last_error and _is_rate_limited(last_error) and cached:
+        return symbol, cached
+
     if info:
         _set_cached_info(symbol, info)
+    else:
+        info = {}
 
     return symbol, info
 
