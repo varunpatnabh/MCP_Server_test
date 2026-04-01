@@ -250,7 +250,9 @@ def compare_stocks(company1: str, company2: str) -> str:
 
 # ── App: health route + FastMCP SSE mounted at "/" ────────────────────────────
 async def health(request: Request):
-    return JSONResponse({"status": "ok", "server": "stock-mcp-server"})
+    return JSONResponse({"status": "ok", "server": "stock-info-server"})
+
+mcp_sse_app = mcp.sse_app()
 
 app = Starlette(
     debug=False,
@@ -259,7 +261,7 @@ app = Starlette(
     ],
     routes=[
         Route("/health", endpoint=health),
-        Mount("/", app=mcp.sse_app()),   # handles /sse and /messages/ correctly
+        *mcp_sse_app.routes,
     ]
 )
 
