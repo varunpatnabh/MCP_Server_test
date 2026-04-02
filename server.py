@@ -51,7 +51,7 @@ COMMON_TICKERS = {
     "shopify": "SHOP", "zoom": "ZM",
 }
 
-CACHE_TTL = 20
+CACHE_TTL = 300  # 5 minutes — reduces Yahoo Finance hits on shared cloud IPs
 _STOCK_CACHE: dict[str, tuple[float, dict]] = {}
 
 
@@ -171,6 +171,15 @@ def _fetch_yahoo_quote(symbol: str) -> dict[str, object]:
     }
 
 
+def _get_stale_cache(symbol: str) -> dict | None:
+    """Return cached data even if expired, for use as a fallback."""
+    entry = _STOCK_CACHE.get(symbol)
+    if not entry:
+        return None
+    _, info = entry
+    return info
+
+
 def get_info(company: str):
     symbol = resolve_ticker(company)
     cached = _get_cached_info(symbol)
@@ -223,8 +232,11 @@ def get_info(company: str):
     if not isinstance(info, dict):
         info = {}
 
-    if not info and last_error and _is_rate_limited(last_error) and cached:
-        return symbol, cached
+    # If still no data and rate-limited, return stale cache rather than failing
+    if not info and last_error and _is_rate_limited(last_error):
+        stale = _get_stale_cache(symbol)
+        if stale:
+            return symbol, stale
 
     if info:
         _set_cached_info(symbol, info)
